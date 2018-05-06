@@ -1,0 +1,359 @@
+---
+title: "Chapter 2"
+author: "Matt Kosko"
+date: "4/27/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(astsa)
+library(dplyr)
+library(dynlm)
+library(gridExtra)
+library(zoo)
+library(GGally)
+library(ggplot2)
+library(forecast)
+data("cmort")
+data("tempr")
+data("part")
+data("JohnsonJohnson")
+y_t <- JohnsonJohnson
+```
+
+
+2.1 **A Structural Model** For the Johnson & Johnson data, say $y_t$ , let $x_t=\log(yt)$.In this problem,we are going to fit a special type of structural model, $x_t = T_t + S_t + N_t$, where $T_t$ is a trend component, $S_t$ is a seasonal component, and $N_t$ is noise. In our case, time t is in quarters (1960.00, 1960.25, . . . ) so one unit of time is a year.
+
+(a) Fit the regression model:
+$$
+x_t = \beta_t + \alpha_1Q_1(t) + \alpha_2Q_2(t) + \alpha_3Q_3(t) + \alpha_4Q_4(t) + w_t
+$$
+where $Q_i(t) = 1$ if time t corresponds to quarter i = 1, 2, 3, 4, and zero otherwise. The $Q_i(t)$’s are called indicator variables. We will assume for now that wt is a Gaussian white noise sequence.
+
+```{r}
+x_t <- log(y_t)
+Q <- factor(cycle(x_t))
+lm.out <- lm(x_t ~  time(x_t) + Q + 0,na.action = NULL)
+sum1 <- summary(lm.out)
+sum1
+```
+
+(b) If the model is correct, what is the estimated average annual increase in the logged earnings per share?
+
+```{r}
+cat("The average annual increase in the logged earnings per share is ",round(coef(sum1)[1,1],2)," per year",sep='')
+```
+
+(c) If the model is correct, does the average logged earnings rate increase or decrease from the third quarter to the fourth quarter? And, by what percentage does it increase or decrease?
+
+In any given year,  logged earnings for the fourth quarter are:
+
+$$
+x_{t,4} = \beta t + \alpha_4 + w_t
+$$
+while third quarter earnings are:
+$$
+x_{t,3} = \beta t + \alpha_3 + w_t
+$$
+The difference between these is:
+$$
+x_{t,4}-x_{t,3} = \alpha_4-\alpha_3
+$$
+```{r}
+cat("The average logged earnings per share ",ifelse(coef(sum1)[5,1] > coef(sum1)[4,1],'increases','decreases')," by ", abs(coef(sum1)[5,1]-coef(sum1)[4,1]),sep='')
+```
+
+(d) What happens if you include an intercept term in the model in (a)? Explain why there was a problem.
+
+There is perfect collineairty betweent the dummy variables and the intercept, meaning that there is no unique OLS solution. This causes one of the dummies to be dropped. Now, the equation sets quarter 1 as the reference quarter. 
+
+```{r}
+lm.out2 <- lm(x_t ~  time(x_t) + Q ,na.action = NULL)
+sum2 <- summary(lm.out2)
+sum2
+```
+
+(e)  Graph the data, $x_t$ , and superimpose the fitted values, say $\hat{x_t}$, on the graph. Examine the residuals, $x_t − \hat{x_t}$ , and state your conclusions. Does it appear that the model fits the data well (do the residuals look white)?
+
+First we plot the original series and the fitted values:
+
+```{r}
+df <- data.frame(time = time(x_t),fitted=predict(lm.out),resid=lm.out$residuals)
+p <- autoplot.zoo(x_t)
+p + geom_line(aes(x=time,y=fitted),data=df,color='red')
+```
+
+```{r warning=FALSE, message=FALSE}
+ggplot(aes(x=fitted,y=resid),data=df) + geom_point() + geom_smooth(se=F)
+```
+
+The model does not appear to fit the data very well, particularly in larger fitted values. The residuals do not appear to be white noise.
+
+
+2.2 For the mortality data examined in Example 2.2:
+
+(a) Add another component to the regression in (2.21) that accounts for the particulate count four weeks prior; that is, add $P_{t−4}$ to the regression in (2.21). State your conclusion.
+
+```{r}
+temp = tempr-mean(tempr)
+tempsq = temp^2
+lm.out1 <- dynlm(cmort ~ time(cmort) + temp + tempsq + part)
+lm.out2 <- dynlm(cmort ~ time(cmort) + temp + tempsq + part + L(part,4))
+sum1 <- summary(lm.out1)
+sum2 <- summary(lm.out2)
+print(sum1)
+print(sum2)
+print(AIC(lm.out1))
+print(AIC(lm.out2))
+```
+
+Adding the lagged particulate count significantly reduces the AIC, leading to the selection of the second model. Looking at plots of the fitted values against the residuals:
+
+```{r warning=FALSE, message=F}
+df1 <- data.frame(time=time(cmort),fitted1=predict(lm.out1),resid1=lm.out1$residuals)
+df2 <- data.frame(time=time(lm.out2),fitted2=predict(lm.out2),resid2=lm.out2$residuals)
+p <- ggplot(aes(x=fitted1,y=resid1),data=df1)
+p  + geom_point() + geom_smooth(se=F)
+```
+
+```{r warning=F, message=F}
+p %+% df2 + aes(x=fitted2,y=resid2) +  geom_point() + geom_smooth(se=F)
+```
+
+The plots gives similar results, showing a good fit except for points at larger fitted values.
+
+(b) Draw a scatterplot matrix of $M_t$, $T_t$, $P_t$, and $P_{t−4}$ and then calculate the pairwise correlations between the series. Compare the relationship between $M_t$ and $P_t$ versus $M_t$ and $P_{t−4}$.
+
+```{r}
+df3 <- ts.intersect(cmort,stats::lag(part,k=4),temp,part)
+df3 %>% pairs()
+```
+
+The graphs appear to show a positive relationship between $P_{t-4}$ and $M_t$ as well as $P_t$ and $M_t$. 
+
+```{r}
+cor(df3)
+```
+
+2.3 In this problem, we explore the difference between a random walk and a trend stationary process.
+
+(a) Generate four series that are random walk with drift of length $n = 100$ with $\delta = .01$ and $\sigma_w = 1$. Call the data $x_t$ for t = 1,...,100. Fit the regression $x_t = \beta t + w_t$ using least squares. Plot the data, the true mean function (i.e., $\mu_t = .01 t$) and the fitted line, $\hat{x_t} = \beta t$, on the same graph.
+
+```{r}
+delta <- 0.01
+create_four_drift <- function(x){
+  w = cumsum(rnorm(100))
+  return(ts(delta*1:100 + w))
+}
+series <- lapply(1:4,create_four_drift)
+```
+
+```{r}
+create_four_plots1 <- function(x){
+  p <- autoplot.zoo(x)
+  return(p + geom_abline(slope=0.01) + geom_smooth(method='lm',formula=y~x-1,se=F))
+}
+plots <- lapply(series,create_four_plots1)
+marrangeGrob(plots,ncol=2,nrow=2)
+```
+
+(b) Generate four series of length $n = 100$ that are linear trend plus noise, say $y_t =.01t+w_t$,where $t$ and $w_t$ areas in part(a). Fit the regression $y_t =\beta t+w_t$ using least squares. Plot the data, the true mean function (i.e., $\mu_t = .01 t$) and the fitted line, $\hat{y_t} = \hat{\beta}t$, on the same graph.
+
+```{r}
+create_four_lin <- function(x){
+  w = rnorm(100)
+  return(ts(delta*1:100 + w))
+}
+series2 <- lapply(1:4,create_four_lin)
+```
+
+```{r}
+create_four_plots2 <- function(x){
+  p <- autoplot.zoo(x)
+  return(p + geom_abline(slope=0.01) + geom_smooth(method='lm',se=F))
+}
+plots2 <- lapply(series2,create_four_plots2)
+marrangeGrob(plots2,ncol=2,nrow=2)
+```
+
+2.8 The glacial varve record plotted in Figure 2.7 exhibits some nonstationarity that
+can be improved by transforming to logarithms and some additional nonstationarity that can be corrected by differencing the logarithms.
+
+(a) Argue that the glacial varves series, say $x_t$ , exhibits heteroscedasticity by com- puting the sample variance over the first half and the second half of the data. Argue that the transformation $y_t = log x_t$ stabilizes the variance over the series. Plot the histograms of $x_t$ and $y_t$ to see whether the approximation to normality is improved by transforming the data.
+
+```{r warning=F, message=F}
+data("varve")
+x_t <- varve
+first <- 1:(length(x_t)/2)
+first_xt <- x_t[first]
+second_xt <- x_t[-first]
+print(var(first_xt))
+print(var(second_xt))
+cat("The variance in the first half is ",round(var(first_xt)/var(second_xt),3)," the size of the variance in the second half\n",sep='')
+y_t <- log(x_t)
+first_yt <- y_t[first]
+second_yt <- y_t[-first]
+print(var(first_yt))
+print(var(second_yt))
+cat("The variance in the first half is ",round(var(first_yt)/var(second_yt),3)," the size of the variance in the second half\n",sep='')
+df <- data.frame(xt = as.numeric(varve),logxt = log(as.numeric(varve)))
+p <- df %>% ggplot(aes(xt))
+p + geom_histogram()
+```
+
+```{r message = F}
+p %+% aes(logxt) + geom_histogram()
+```
+
+(b) Plot the series $y_t$. Do any time intervals, of the order 100 years, exist where one can observe behavior comparable to that observed in the global temperature records in Figure 1.2?
+```{r}
+autoplot.zoo(y_t)
+```
+
+There looks to be cyclical behavior, with a cycle every 500 years or so.
+
+(c) Examine the sample ACF of $y_t$ and comment.
+
+```{r}
+ggAcf(y_t)
+```
+
+(d) Compute the difference $u_t = y_t − y_{t−1}$, examine its time plot and sample ACF,
+and argue that differencing the logged varve data produces a reasonably stationary series. Can you think of a practical interpretation for $u_t$? Hint: Recall Footnote 1.2.
+
+```{r}
+ut <- y_t-stats::lag(y_t,k=1)
+ggAcf(ut)
+```
+  
+2.9 In this problem, we will explore the periodic nature of $S_t$ , the SOI series displayed in Figure 1.5.
+
+(a) Detrend the series by fitting a regression of $S_t$ on time t. Is there a significant trend in the sea surface temperature? Comment.
+
+```{r}
+data(soi)
+lm.out <- lm(soi ~ time(soi),na.action = NULL)
+detrend <- lm.out$residuals
+summary(lm.out)
+```
+
+```{r}
+p1 <- autoplot.zoo(detrend) 
+p2 <- autoplot.zoo(soi)
+grid.arrange(p1,p2)
+```
+
+2.10 Consider the two weekly time series `oil` and `gas`. The `oil` series is in dollars per barrel, while the gas series is in cents per gallon.
+
+(a) Plot the data on the same graph. Which of the simulated series displayed in Section 1.2 do these series most resemble? Do you believe the series are stationary (explain your answer)?
+
+```{r message = FALSE}
+
+df1 <- data.frame(time=time(oil),var=oil/42)
+df2 <- data.frame(time=time(astsa::gas),var=astsa::gas/100)
+
+ggplot() + geom_line(data=df1,aes(x=time,y=var,color='Oil')) + geom_line(data=df2,aes(x=time,y=var,color='Gas'))
+```
+
+These series look like they could be random walk with an upward drift, which are not stationary series.
+
+(b) In economics, it is often the percentage change in price (termed growth rate or return), rather than the absolute price change, that is important. Argue that a transformation of the form $y_t = \nabla\log(x_t)$ might be applied to the data, where $x_t$ is the oil or gas price series. Hint: Recall Footnote 1.2.
+
+The series $y_t$ is:
+$$
+y_t = \log(x_t)-\log(x_{t-1}) = \log\left(\dfrac{x_t}{x_{t-1}}\right)
+$$
+
+(c) Transform the data as described in part (b), plot the data on the same graph, look at the sample ACFs of the transformed data, and comment.
+```{r message = F}
+goil <- diff(log(oil))
+ggas <- diff(log(astsa::gas))
+df1 <- data.frame(time=time(goil),var=goil)
+df2 <- data.frame(time=time(ggas),var=ggas)
+
+ggplot() + geom_line(data=df1,aes(x=time,y=var,color='Oil Growth')) + geom_line(data=df2,aes(x=time,y=var,color='Gas Growth'))
+```
+
+The sample ACFs are given by:
+```{r}
+acf(goil)
+```
+
+```{r}
+acf(ggas)
+```
+
+(d) Plot the CCF of the transformed data and comment The small, but significant values when gas leads oil might be considered as feedback.
+
+```{r}
+cross_corr = ccf(ggas,goil)
+```
+
+(e) Exhibit scatterplots of the oil and gas growth rate series for up to three weeks of lead time of oil prices; include a nonparametric smoother in each plot and comment on the results (e.g., Are there outliers? Are the relationships linear?).
+
+```{r warning=FALSE,message=FALSE}
+multiple_lead <- function(i){
+  oillead <- stats::lag(oil,k=-i)
+  goil.lead <- diff(log(oillead))
+  df <- ts.intersect(goil.lead=goil.lead,ggas=ggas,time=time(goil.lead),dframe=TRUE)
+  return(ggplot(df,aes(y=ggas)) + geom_point(aes(x=goil.lead))) 
+}
+l <- lapply(1:3,multiple_lead)
+marrangeGrob(l,ncol=3,nrow=1)
+```
+
+(f) There have been a number of studies questioning whether gasoline prices respond more quickly when oil prices are rising than when oil prices are falling (“asymmetry”). We will attempt to explore this question here with simple lagged regression; we will ignore some obvious problems such as outliers and autocorrelated errors, so this will not be a definitive analysis. Let $G_t$ and $O_t$ denote the gas and oil growth rates.
+
+(i) Fit the regression (and comment on the results)
+$$
+G_t = α_1 + α_2I_t + \beta_1O_t + \beta_2O_{t−1} + wt
+$$
+where $I_t = 1$ if $O_t \geq 0$ and 0 otherwise (It is the indicator of no growth or positive growth in oil price). 
+
+```{r}
+goil <- diff(oil)
+ggas <- diff(astsa::gas)
+lm.out <- dynlm(ggas ~ goil + stats::lag(goil,-1) + I(goil > 0))
+summary(lm.out)
+coef(summary(lm.out))[,1]
+```
+
+
+(ii) What is the fitted model when there is negative growth in oil price at time t? What is the fitted model when there is no or positive growth in oil price? Do these results support the asymmetry hypothesis?
+The model when the the oil growth rate is greater than 1 is:
+  
+$$
+  G_t = -1.21 + 2.32 + 1.71O_{t} + 0.21O_{t-1}
+$$
+  
+The model when the oil growth rate is less than 0:
+
+$$
+  G_t = -1.21 + 1.71O_{t} + 0.21O_{t-1}
+$$
+  
+Yes, there is evidence of the asymmetry hypothesis. The growth rate of gasoline depends not only on the level of the oil growth rate, but also its sign. A positive growth rate boosts gasoline prices beyond what would be predicted just by the oil growth rate.
+
+(iii) Analyze the residuals from the fit and comment.
+
+```{r warning=FALSE, message=FALSE}
+df <- data.frame(resid= lm.out$residuals, fitted = predict(lm.out))
+ggplot(df,aes(x=fitted,y=resid)) + geom_point() + geom_smooth(se=F)
+```
+
+The fit is fairly good, except for some outliers.
+
+
+2.11 Use two different smoothing techniques described in Section 2.3 to estimate the trend in the global temperature series `globtemp`. Comment.
+
+```{r message=FALSE}
+kern <- ksmooth(time(globtemp),globtemp,'normal',bandwidth=4)$y
+sp <- smooth.spline(time(globtemp),globtemp,spar=0.6)$y
+df <- data.frame(time=time(globtemp),kernel = kern, spline = sp, temp=globtemp)
+ggplot(df,aes(x=time)) + geom_line(aes(y=temp)) + geom_line(aes(y=kern,color='Kernel'),lineend='round') +
+  geom_line(aes(y=sp,color='Smoothing Splines'),lineend='round')
+```
+
+
+We use kernel smoothing with a bandwidth of 4 and smoothing splines with a smoothing parameter of $\lambda = 0.6$.
